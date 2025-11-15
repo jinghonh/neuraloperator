@@ -16,6 +16,7 @@ dependencies = [
     "opt-einsum",
     "h5py",
     "zencfg>=0.3.0",
+    "torch==2.5.1",
 ]
 requires-python = ">=3.9"
 readme = "README.rst"
@@ -34,6 +35,10 @@ include = [
     "neuralop",
     "neuralop.*",    
 ]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
 
 # Dynamic versioning from neuralop.__init__
 [tool.setuptools.dynamic]
