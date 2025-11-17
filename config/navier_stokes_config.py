@@ -18,7 +18,7 @@ class NavierStokesOptConfig(OptimizationConfig):
 
 
 class NavierStokesDatasetConfig(ConfigBase):
-    folder: str = "~/data/navier_stokes/"
+    folder: str = "./data/navier_stokes/"
     batch_size: int = 8
     n_train: int = 10000
     train_resolution: int = 128
