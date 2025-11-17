@@ -30,6 +30,7 @@ class DataProcessor(torch.nn.Module, metaclass=ABCMeta):
             forward pass providing that a model has been wrapped
         """
         super().__init__()
+        self.non_blocking = False
 
     @abstractmethod
     def to(self, device):
@@ -42,6 +43,11 @@ class DataProcessor(torch.nn.Module, metaclass=ABCMeta):
     @abstractmethod
     def postprocess(self, x):
         pass
+
+    def set_non_blocking(self, enabled: bool = True):
+        """Enable/disable non_blocking memory transfers during preprocess."""
+        self.non_blocking = enabled
+        return self
 
     # default wrap method
     def wrap(self, model):
@@ -115,8 +121,8 @@ class DefaultDataProcessor(DataProcessor):
         dict
             preprocessed data_dict
         """
-        x = data_dict["x"].to(self.device)
-        y = data_dict["y"].to(self.device)
+        x = data_dict["x"].to(self.device, non_blocking=self.non_blocking)
+        y = data_dict["y"].to(self.device, non_blocking=self.non_blocking)
 
         if self.in_normalizer is not None:
             x = self.in_normalizer.transform(x)
@@ -220,6 +226,7 @@ class IncrementalDataProcessor(torch.nn.Module):
         self.current_logged_epoch = 0
         self.current_sub = self.index_to_sub_from_table(self.current_index)
         self.current_res = int(self.dataset_resolution / self.current_sub)
+        self.non_blocking = False
 
         print(f"Original Incre Res: change index to {self.current_index}")
         print(f"Original Incre Res: change sub to {self.current_sub}")
@@ -231,6 +238,10 @@ class IncrementalDataProcessor(torch.nn.Module):
         if self.out_normalizer is not None:
             self.out_normalizer = self.out_normalizer.to(device)
         self.device = device
+        return self
+
+    def set_non_blocking(self, enabled: bool = True):
+        self.non_blocking = enabled
         return self
 
     def epoch_wise_res_increase(self, epoch):
@@ -271,8 +282,8 @@ class IncrementalDataProcessor(torch.nn.Module):
             return self.regularize_input_res(x, y)
 
     def preprocess(self, data_dict, batched=True):
-        x = data_dict["x"].to(self.device)
-        y = data_dict["y"].to(self.device)
+        x = data_dict["x"].to(self.device, non_blocking=self.non_blocking)
+        y = data_dict["y"].to(self.device, non_blocking=self.non_blocking)
 
         if self.in_normalizer is not None:
             x = self.in_normalizer.transform(x)
@@ -379,7 +390,9 @@ class MGPatchingDataProcessor(DataProcessor):
             whether the first dimension of 'x', 'y' represents batching
         """
         data_dict = {
-            k: v.to(self.device) for k, v in data_dict.items() if torch.is_tensor(v)
+            k: v.to(self.device, non_blocking=self.non_blocking)
+            for k, v in data_dict.items()
+            if torch.is_tensor(v)
         }
         x, y = data_dict["x"], data_dict["y"]
         if self.in_normalizer:

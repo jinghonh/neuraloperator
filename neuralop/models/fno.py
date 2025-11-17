@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Set warning filter to show each warning only once
+# 设置警告过滤器，使每个警告只显示一次
 import warnings
 
 warnings.filterwarnings("once", category=UserWarning)
@@ -23,120 +23,120 @@ from .base_model import BaseModel
 
 
 class FNO(BaseModel, name="FNO"):
-    """N-Dimensional Fourier Neural Operator. The FNO learns a mapping between
-    spaces of functions discretized over regular grids using Fourier convolutions,
-    as described in [1]_.
+    """N维傅里叶神经算子 (FNO)。
 
-    The key component of an FNO is its SpectralConv layer (see
-    ``neuralop.layers.spectral_convolution``), which is similar to a standard CNN
-    conv layer but operates in the frequency domain.
+    FNO 使用傅里叶卷积学习在规则网格上离散化的函数空间之间的映射，
+    如 [1]_ 中所述。
 
-    For a deeper dive into the FNO architecture, refer to :ref:`fno_intro`.
+    FNO 的关键组成部分是其 SpectralConv 层（请参阅
+    ``neuralop.layers.spectral_convolution``），它类似于标准的 CNN
+    卷积层，但在频域中操作。
 
-    Main Parameters
-    ---------------
+    有关 FNO 架构的更深入介绍，请参阅 :ref:`fno_intro`。
+
+    主要参数
+    ----------
     n_modes : Tuple[int, ...]
-        Number of modes to keep in Fourier Layer, along each dimension.
-        The dimensionality of the FNO is inferred from len(n_modes).
-        n_modes must be larger enough but smaller than max_resolution//2 (Nyquist frequency)
+        在傅里叶层中，沿每个维度保留的模式数。
+        FNO 的维度由 len(n_modes) 推断。
+        n_modes 必须足够大，但要小于 max_resolution//2（奈奎斯特频率）。
     in_channels : int
-        Number of channels in input function. Determined by the problem.
+        输入函数中的通道数。由具体问题确定。
     out_channels : int
-        Number of channels in output function. Determined by the problem.
+        输出函数中的通道数。由具体问题确定。
     hidden_channels : int
-        Width of the FNO (i.e. number of channels).
-        This significantly affects the number of parameters of the FNO.
-        Good starting point can be 64, and then increased if more expressivity is needed.
-        Update lifting_channel_ratio and projection_channel_ratio accordingly since they are proportional to hidden_channels.
+        FNO 的宽度（即通道数）。
+        这会显著影响 FNO 的参数数量。
+        一个好的起点可以是 64，如果需要更强的表达能力，可以增加。
+        相应地更新 lifting_channel_ratio 和 projection_channel_ratio，因为它们与 hidden_channels 成正比。
     n_layers : int, optional
-        Number of Fourier Layers. Default: 4
+        傅里叶层数。默认为 4。
 
-    Other parameters
+    其他参数
     ---------------
     lifting_channel_ratio : Number, optional
-        Ratio of lifting channels to hidden_channels.
-        The number of lifting channels in the lifting block of the FNO is
-        lifting_channel_ratio * hidden_channels (e.g. default 2 * hidden_channels).
+        提升层通道数与隐藏层通道数的比率。
+        FNO 提升块中的提升通道数是
+        lifting_channel_ratio * hidden_channels（例如，默认为 2 * hidden_channels）。
     projection_channel_ratio : Number, optional
-        Ratio of projection channels to hidden_channels.
-        The number of projection channels in the projection block of the FNO is
-        projection_channel_ratio * hidden_channels (e.g. default 2 * hidden_channels).
+        投影层通道数与隐藏层通道数的比率。
+        FNO 投影块中的投影通道数是
+        projection_channel_ratio * hidden_channels（例如，默认为 2 * hidden_channels）。
     positional_embedding : Union[str, nn.Module], optional
-        Positional embedding to apply to last channels of raw input
-        before being passed through the FNO.
-        Options:
-        - "grid": Appends a grid positional embedding with default settings to the last channels of raw input.
-          Assumes the inputs are discretized over a grid with entry [0,0,...] at the origin and side lengths of 1.
-        - GridEmbeddingND: Uses this module directly (see :mod:`neuralop.embeddings.GridEmbeddingND` for details).
-        - GridEmbedding2D: Uses this module directly for 2D cases.
-        - None: Does nothing.
-        Default: "grid"
+        在通过 FNO 之前，应用于原始输入最后通道的位置嵌入。
+        选项:
+        - "grid": 将具有默认设置的网格位置嵌入附加到原始输入的最后通道。
+          假设输入在原点为 [0,0,...] 且边长为 1 的网格上离散化。
+        - GridEmbeddingND: 直接使用此模块（详见 :mod:`neuralop.embeddings.GridEmbeddingND`）。
+        - GridEmbedding2D: 直接用于 2D 情况。
+        - None: 不执行任何操作。
+        默认为 "grid"。
     non_linearity : nn.Module, optional
-        Non-Linear activation function module to use. Default: F.gelu
+        要使用的非线性激活函数模块。默认为 F.gelu。
     norm : Literal["ada_in", "group_norm", "instance_norm"], optional
-        Normalization layer to use. Options: "ada_in", "group_norm", "instance_norm", None. Default: None
+        要使用的归一化层。选项："ada_in", "group_norm", "instance_norm", None。默认为 None。
     complex_data : bool, optional
-        Whether the data is complex-valued. If True, initializes complex-valued modules. Default: False
+        数据是否为复数值。如果为 True，则初始化复数值模块。默认为 False。
     use_channel_mlp : bool, optional
-        Whether to use an MLP layer after each FNO block. Default: True
+        是否在每个 FNO 块后使用 MLP 层。默认为 True。
     channel_mlp_dropout : float, optional
-        Dropout parameter for ChannelMLP in FNO Block. Default: 0
+        FNO 块中 ChannelMLP 的 Dropout 参数。默认为 0。
     channel_mlp_expansion : float, optional
-        Expansion parameter for ChannelMLP in FNO Block. Default: 0.5
+        FNO 块中 ChannelMLP 的扩展参数。默认为 0.5。
     channel_mlp_skip : Literal["linear", "identity", "soft-gating", None], optional
-        Type of skip connection to use in channel-mixing mlp. Options: "linear", "identity", "soft-gating", None.
-        Default: "soft-gating"
+        在通道混合 MLP 中使用的跳跃连接类型。选项："linear", "identity", "soft-gating", None。
+        默认为 "soft-gating"。
     fno_skip : Literal["linear", "identity", "soft-gating", None], optional
-        Type of skip connection to use in FNO layers. Options: "linear", "identity", "soft-gating", None.
-        Default: "linear"
+        在 FNO 层中使用的跳跃连接类型。选项："linear", "identity", "soft-gating", None。
+        默认为 "linear"。
     resolution_scaling_factor : Union[Number, List[Number]], optional
-        Layer-wise factor by which to scale the domain resolution of function.
-        Options:
-        - None: No scaling
-        - Single number n: Scales resolution by n at each layer
-        - List of numbers [n_0, n_1,...]: Scales layer i's resolution by n_i
-        Default: None
+        按层缩放函数域分辨率的因子。
+        选项:
+        - None: 不缩放。
+        - 单个数字 n: 在每层将分辨率缩放 n 倍。
+        - 数字列表 [n_0, n_1,...]: 将第 i 层的分辨率缩放 n_i 倍。
+        默认为 None。
     domain_padding : Union[Number, List[Number]], optional
-        Percentage of padding to use.
-        Options:
-        - None: No padding
-        - Single number: Percentage of padding to use along all dimensions
-        - List of numbers [p1, p2, ..., pN]: Percentage of padding along each dimension
-        Default: None
+        要使用的填充百分比。
+        选项:
+        - None: 无填充。
+        - 单个数字: 沿所有维度使用的填充百分比。
+        - 数字列表 [p1, p2, ..., pN]: 沿每个维度使用的填充百分比。
+        默认为 None。
     fno_block_precision : str, optional
-        Precision mode in which to perform spectral convolution.
-        Options: "full", "half", "mixed". Default: "full". Default: "full"
+        执行频谱卷积的精度模式。
+        选项: "full", "half", "mixed"。默认为 "full"。
     stabilizer : str, optional
-        Whether to use a stabilizer in FNO block. Options: "tanh", None. Default: None.
-        stabilizer greatly improves performance in the case `fno_block_precision='mixed'`.
+        是否在 FNO 块中使用稳定器。选项: "tanh", None。默认为 None。
+        在 `fno_block_precision='mixed'` 的情况下，稳定器能极大地提高性能。
     max_n_modes : Tuple[int, ...], optional
-        Maximum number of modes to use in Fourier domain during training.
-        None means that all the n_modes are used.
-        Tuple of integers: Incrementally increase the number of modes during training.
-        This can be updated dynamically during training.
+        训练期间在傅里叶域中使用的最大模式数。
+        None 表示使用所有的 n_modes。
+        整数元组: 在训练期间逐步增加模式数。
+        这可以在训练期间动态更新。
     factorization : str, optional
-        Tensor factorization of the FNO layer weights to use.
-        Options: "None", "Tucker", "CP", "TT"
-        Other factorization methods supported by tltorch. Default: None
+        要使用的 FNO 层权重的张量分解方法。
+        选项: "None", "Tucker", "CP", "TT"。
+        tltorch 支持的其他分解方法。默认为 None。
     rank : float, optional
-        Tensor rank to use in factorization. Default: 1.0
-        Set to float <1.0 when using TFNO (i.e. when factorization is not None).
-        A TFNO with rank 0.1 has roughly 10% of the parameters of a dense FNO.
+        用于分解的张量秩。默认为 1.0。
+        当使用 TFNO（即 factorization 不为 None）时，设置为小于 1.0 的浮点数。
+        秩为 0.1 的 TFNO 的参数数量大约是密集 FNO 的 10%。
     fixed_rank_modes : bool, optional
-        Whether to not factorize certain modes. Default: False
+        是否不对某些模式进行分解。默认为 False。
     implementation : str, optional
-        Implementation method for factorized tensors.
-        Options: "factorized", "reconstructed". Default: "factorized"
+        分解张量的实现方法。
+        选项: "factorized", "reconstructed"。默认为 "factorized"。
     decomposition_kwargs : dict, optional
-        Extra kwargs for tensor decomposition (see `tltorch.FactorizedTensor`). Default: {}
+        张量分解的额外关键字参数（请参阅 `tltorch.FactorizedTensor`）。默认为 {}。
     separable : bool, optional
-        Whether to use a separable spectral convolution. Default: False
+        是否使用可分离的频谱卷积。默认为 False。
     preactivation : bool, optional
-        Whether to compute FNO forward pass with resnet-style preactivation. Default: False
+        是否使用 resnet 风格的预激活计算 FNO 前向传播。默认为 False。
     conv_module : nn.Module, optional
-        Module to use for FNOBlock's convolutions. Default: SpectralConv
+        用于 FNOBlock 卷积的模块。默认为 SpectralConv。
 
-    Examples
+    示例
     ---------
 
     >>> from neuralop.models import FNO
@@ -152,7 +152,7 @@ class FNO(BaseModel, name="FNO"):
         )
             ... torch.nn.Module printout truncated ...
 
-    References
+    参考文献
     -----------
     .. [1] :
 
@@ -198,8 +198,8 @@ class FNO(BaseModel, name="FNO"):
         super().__init__()
         self.n_dim = len(n_modes)
 
-        # n_modes is a special property - see the class' property for underlying mechanism
-        # When updated, change should be reflected in fno blocks
+        # n_modes 是一个特殊属性 - 请参阅类的属性以了解其底层机制
+        # 更新时，更改应反映在 fno 块中
         self._n_modes = n_modes
 
         self.hidden_channels = hidden_channels
@@ -207,7 +207,7 @@ class FNO(BaseModel, name="FNO"):
         self.out_channels = out_channels
         self.n_layers = n_layers
 
-        # init lifting and projection channels using ratios w.r.t hidden channels
+        # 使用相对于隐藏通道的比率初始化提升和投影通道
         self.lifting_channel_ratio = lifting_channel_ratio
         self.lifting_channels = int(lifting_channel_ratio * self.hidden_channels)
 
@@ -227,7 +227,9 @@ class FNO(BaseModel, name="FNO"):
         self.complex_data = complex_data
         self.fno_block_precision = fno_block_precision
 
-        ## Positional embedding
+        ## 位置嵌入
+        # 如果 positional_embedding 为 "grid"，则创建一个 GridEmbeddingND 实例
+        # 这将在输入中添加坐标信息，帮助模型理解空间关系
         if positional_embedding == "grid":
             spatial_grid_boundaries = [[0.0, 1.0]] * self.n_dim
             self.positional_embedding = GridEmbeddingND(
@@ -240,7 +242,7 @@ class FNO(BaseModel, name="FNO"):
                 self.positional_embedding = positional_embedding
             else:
                 raise ValueError(
-                    f"Error: expected {self.n_dim}-d positional embeddings, got {positional_embedding}"
+                    f"错误：期望 {self.n_dim}-d 位置嵌入，但得到 {positional_embedding}"
                 )
         elif isinstance(positional_embedding, GridEmbeddingND):
             self.positional_embedding = positional_embedding
@@ -248,11 +250,13 @@ class FNO(BaseModel, name="FNO"):
             self.positional_embedding = None
         else:
             raise ValueError(
-                f"Error: tried to instantiate FNO positional embedding with {positional_embedding},\
-                              expected one of 'grid', GridEmbeddingND"
+                f"错误：尝试使用 {positional_embedding} 实例化 FNO 位置嵌入，"
+                f"期望的是 'grid' 或 GridEmbeddingND"
             )
 
-        ## Domain padding
+        ## 域填充
+        # 如果指定了 domain_padding，则创建一个 DomainPadding 实例
+        # 这有助于处理周期性边界条件或减少傅里叶变换的边界效应
         if domain_padding is not None and (
             (isinstance(domain_padding, list) and sum(domain_padding) > 0)
             or (isinstance(domain_padding, (float, int)) and domain_padding > 0)
@@ -264,13 +268,15 @@ class FNO(BaseModel, name="FNO"):
         else:
             self.domain_padding = None
 
-        ## Resolution scaling factor
+        ## 分辨率缩放因子
+        # 如果提供了缩放因子，则为每一层都设置
         if resolution_scaling_factor is not None:
             if isinstance(resolution_scaling_factor, (float, int)):
                 resolution_scaling_factor = [resolution_scaling_factor] * self.n_layers
         self.resolution_scaling_factor = resolution_scaling_factor
 
-        ## FNO blocks
+        ## FNO 核心块
+        # 这是模型的核心，包含一系列傅里叶卷积层
         self.fno_blocks = FNOBlocks(
             in_channels=hidden_channels,
             out_channels=hidden_channels,
@@ -298,13 +304,14 @@ class FNO(BaseModel, name="FNO"):
             n_layers=n_layers,
         )
 
-        ## Lifting layer
-        # if adding a positional embedding, add those channels to lifting
+        ## 提升层 (Lifting Layer)
+        # 将输入从低维空间映射到高维隐空间
+        # 如果添加了位置嵌入，则输入通道数需要增加
         lifting_in_channels = self.in_channels
         if self.positional_embedding is not None:
             lifting_in_channels += self.n_dim
-        # if lifting_channels is passed, make lifting a Channel-Mixing MLP
-        # with a hidden layer of size lifting_channels
+        # 如果指定了 lifting_channels，则使用一个带隐藏层的 Channel-Mixing MLP
+        # 否则，使用一个简单的线性层
         if self.lifting_channels:
             self.lifting = ChannelMLP(
                 in_channels=lifting_in_channels,
@@ -314,7 +321,6 @@ class FNO(BaseModel, name="FNO"):
                 n_dim=self.n_dim,
                 non_linearity=non_linearity,
             )
-        # otherwise, make it a linear layer
         else:
             self.lifting = ChannelMLP(
                 in_channels=lifting_in_channels,
@@ -324,11 +330,12 @@ class FNO(BaseModel, name="FNO"):
                 n_dim=self.n_dim,
                 non_linearity=non_linearity,
             )
-        # Convert lifting to a complex ChannelMLP if self.complex_data==True
+        # 如果数据是复数，则将提升层转换为复数值 MLP
         if self.complex_data:
             self.lifting = ComplexValued(self.lifting)
 
-        ## Projection layer
+        ## 投影层 (Projection Layer)
+        # 将高维隐空间中的数据映射回输出空间
         self.projection = ChannelMLP(
             in_channels=self.hidden_channels,
             out_channels=out_channels,
@@ -341,38 +348,38 @@ class FNO(BaseModel, name="FNO"):
             self.projection = ComplexValued(self.projection)
 
     def forward(self, x, output_shape=None, **kwargs):
-        """FNO's forward pass
+        """FNO 的前向传播过程
 
-        1. Applies optional positional encoding
+        1. 应用可选的位置编码
 
-        2. Sends inputs through a lifting layer to a high-dimensional latent space
+        2. 通过提升层将输入发送到高维潜在空间
 
-        3. Applies optional domain padding to high-dimensional intermediate function representation
+        3. 对高维中间函数表示应用可选的域填充
 
-        4. Applies `n_layers` Fourier/FNO layers in sequence (SpectralConvolution + skip connections, nonlinearity)
+        4. 依次应用 `n_layers` 个傅里叶/FNO 层（谱卷积 + 跳跃连接，非线性激活）
 
-        5. If domain padding was applied, domain padding is removed
+        5. 如果应用了域填充，则移除域填充
 
-        6. Projection of intermediate function representation to the output channels
+        6. 将中间函数表示投影到输出通道
 
-        Parameters
+        参数
         ----------
         x : tensor
-            input tensor
+            输入张量
 
-        output_shape : {tuple, tuple list, None}, default is None
-            Gives the option of specifying the exact output shape for odd shaped inputs.
+        output_shape : {tuple, tuple list, None}, 默认为 None
+            提供为奇数形状输入指定确切输出形状的选项。
 
-            * If None, don't specify an output shape
+            * 如果为 None，则不指定输出形状
 
-            * If tuple, specifies the output-shape of the **last** FNO Block
+            * 如果为元组，则指定 **最后一个** FNO 块的输出形状
 
-            * If tuple list, specifies the exact output-shape of each FNO Block
+            * 如果为元组列表，则指定每个 FNO 块的确切输出形状
         """
         if kwargs:
             warnings.warn(
-                f"FNO.forward() received unexpected keyword arguments: {list(kwargs.keys())}. "
-                "These arguments will be ignored.",
+                f"FNO.forward() 收到了意外的关键字参数: {list(kwargs.keys())}。"
+                "这些参数将被忽略。",
                 UserWarning,
                 stacklevel=2,
             )
@@ -382,7 +389,7 @@ class FNO(BaseModel, name="FNO"):
         elif isinstance(output_shape, tuple):
             output_shape = [None] * (self.n_layers - 1) + [output_shape]
 
-        # append spatial pos embedding if set
+        # 如果设置了，则附加空间位置嵌入
         if self.positional_embedding is not None:
             x = self.positional_embedding(x)
 
@@ -403,31 +410,33 @@ class FNO(BaseModel, name="FNO"):
 
     @property
     def n_modes(self):
+        """获取傅里叶模式的数量"""
         return self._n_modes
 
     @n_modes.setter
     def n_modes(self, n_modes):
+        """设置傅里叶模式的数量，并更新 FNO 块"""
         self.fno_blocks.n_modes = n_modes
         self._n_modes = n_modes
 
 
 def partialclass(new_name, cls, *args, **kwargs):
-    """Create a new class with different default values
+    """创建一个具有不同默认值的新类
 
-    See the Spherical FNO class in neuralop/models/sfno.py for an example.
+    有关示例，请参阅 neuralop/models/sfno.py 中的球形 FNO 类。
 
-    Notes
+    注意
     -----
-    An obvious alternative would be to use functools.partial
+    一个明显的替代方法是使用 functools.partial
     >>> new_class = partial(cls, **kwargs)
 
-    The issue is twofold:
-    1. the class doesn't have a name, so one would have to set it explicitly:
+    问题有两方面：
+    1. 该类没有名称，因此必须显式设置：
     >>> new_class.__name__ = new_name
 
-    2. the new class will be a functools object and one cannot inherit from it.
+    2. 新类将是一个 functools 对象，不能从中继承。
 
-    Instead, here, we define dynamically a new class, inheriting from the existing one.
+    相反，在这里，我们动态定义一个新类，继承自现有类。
     """
     __init__ = partialmethod(cls.__init__, *args, **kwargs)
     return type(
@@ -442,33 +451,33 @@ def partialclass(new_name, cls, *args, **kwargs):
 
 
 class TFNO(FNO):
-    """Tucker Tensorized Fourier Neural Operator (TFNO).
+    """Tucker 张量化傅里叶神经算子 (TFNO)。
 
-    TFNO is an FNO with Tucker factorization enabled by default.
+    TFNO 是一个默认启用 Tucker 分解的 FNO。
 
-    It uses Tucker factorization of the weights, making the forward pass efficient by contracting
-    directly with the factors of the decomposition.
+    它使用权重的 Tucker 分解，通过直接与分解的因子进行收缩，
+    使得前向传播非常高效。
 
-    This results in a fraction of the parameters of an equivalent dense FNO.
+    这导致其参数数量仅为等效密集 FNO 的一小部分。
 
-    Parameters
+    参数
     ----------
     factorization : str, optional
-        Tensor factorization method, by default "Tucker"
+        张量分解方法，默认为 "Tucker"
     rank : float, optional
-        Tensor rank for factorization, by default 0.1.
-        A TFNO with rank 0.1 has roughly 10% of the parameters of a dense FNO.
+        用于分解的张量秩，默认为 0.1。
+        秩为 0.1 的 TFNO 的参数数量大约是密集 FNO 的 10%。
 
-    All other parameters are inherited from FNO with identical defaults.
-    See FNO class docstring for the complete parameter list.
+    所有其他参数均继承自 FNO，具有相同的默认值。
+    有关完整的参数列表，请参阅 FNO 类的文档字符串。
 
-    Examples
+    示例
     --------
     >>> from neuralop.models import TFNO
-    >>> # Create a TFNO model with default Tucker factorization
+    >>> # 创建一个具有默认 Tucker 分解的 TFNO 模型
     >>> model = TFNO(n_modes=(12, 12), in_channels=1, out_channels=1, hidden_channels=64)
     >>>
-    >>> # Equivalent FNO model with explicit factorization:
+    >>> # 具有显式分解的等效 FNO 模型：
     >>> model = FNO(n_modes=(12, 12), in_channels=1, out_channels=1, hidden_channels=64,
     ...             factorization="Tucker", rank=0.1)
     """

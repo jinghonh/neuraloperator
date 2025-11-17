@@ -1,6 +1,6 @@
 """
-Snippet to load all artifacts of training state as Modules
-without constraining to use inside a default Trainer
+加载所有训练状态工件作为模块的片段，
+而不限制在默认 Trainer 内部使用。
 """
 from typing import Union
 from pathlib import Path
@@ -20,42 +20,45 @@ def load_training_state(
     regularizer: nn.Module = None,
     map_location: dict = None,
 ) -> dict:
-    """load_training_state returns model and optional other training modules
-    saved from prior training for downstream use
+    """加载模型以及可选的优化器、调度器和正则化器状态。
 
-    Parameters
+    此辅助函数镜像了 `save_training_state` 创建的检查点，
+    并使得在不与 Trainer 实现紧密耦合的情况下，可以轻松地恢复训练或分析训练好的模型。
+
+    参数
     ----------
     save_dir : Union[str, Path]
-        directory from which to load training state (model, optional optimizer, scheduler, regularizer)
+        从中加载训练状态（模型、可选的优化器、调度器、正则化器）的目录
     save_name : str
-        name of model to load
+        要加载的模型的名称
     model : nn.Module
-        model to save
+        要保存的模型
     optimizer : nn.Module, optional
-        optimizer object to save, by default None
+        要保存的优化器对象，默认为 None
     scheduler : nn.Module, optional
-        scheduler object to save, by default None
+        要保存的调度器对象，默认为 None
     regularizer : nn.Module, optional
-        regularizer object to save, by default None
+        要保存的正则化器对象，默认为 None
     map_location : dict, optional
-        mapping dictionary keyed `{device_from: device_to}`, by default None
-        dictionary instructs torch to load a model from a checkpoint on rank `device_from`
-        and send it to `device_to`
+        映射字典，键为 `{device_from: device_to}`，默认为 None
+        字典指示 torch 从 rank `device_from` 上的检查点加载模型
+        并将其发送到 `device_to`
 
-    Returns
+    返回
     -------
-    tuple of training state
+    训练状态的元组
         ``model, optimizer, scheduler, regularizer, epoch``
 
     """
     if not map_location:
         if dist.is_initialized():
+            # 确保检查点张量被重新映射到本地 GPU
             map_location = {"cuda:0": f"cuda:{get_local_rank()}"}
 
     if isinstance(save_dir, str):
         save_dir = Path(save_dir)
 
-    # optionally load epoch
+    # 可选地加载 epoch，以便恢复的 Trainer 知道从哪里继续
     epoch = None
     manifest_pth = save_dir / "manifest.pt"
     if manifest_pth.exists():
@@ -63,9 +66,8 @@ def load_training_state(
         epoch = manifest.get("epoch")
 
     if dist.is_initialized():
-        # To minimize CUDA memory overhead during checkpoint loading,
-        # load the model to CPU first, then load to GPU instead of mapping from
-        # CUDA:0 to CUDA:DEVICE_ID
+        # 对于分布式训练，首先在 CPU 上加载检查点，以避免
+        # 在多个 CUDA 设备之间复制张量。
         device_id = get_local_rank()
         save_pth = save_dir / f"{save_name}_state_dict.pt"
         model.load_state_dict(
@@ -77,27 +79,27 @@ def load_training_state(
         save_pth = save_dir / f"{save_name}_state_dict.pt"
         model.load_state_dict(torch.load(save_pth.absolute().as_posix()))
 
-    # load optimizer if state exists
+    # 如果状态存在，则加载优化器
     if optimizer is not None:
         optimizer_pth = save_dir / "optimizer.pt"
         if optimizer_pth.exists():
             optimizer.load_state_dict(torch.load(optimizer_pth.absolute().as_posix(), map_location=map_location))
         else:
-            print(f"Warning: requested to load optimizer state, but no saved optimizer state exists in {save_dir}.")
+            print(f"警告：请求加载优化器状态，但在 {save_dir} 中不存在已保存的优化器状态。")
     
     if scheduler is not None:
         scheduler_pth = save_dir / "scheduler.pt"
         if scheduler_pth.exists():
             scheduler.load_state_dict(torch.load(scheduler_pth.absolute().as_posix(), map_location=map_location))
         else:
-            print(f"Warning: requested to load scheduler state, but no saved scheduler state exists in {save_dir}.")
+            print(f"警告：请求加载调度器状态，但在 {save_dir} 中不存在已保存的调度器状态。")
     
     if regularizer is not None:
         regularizer_pth = save_dir / "regularizer.pt"
         if regularizer_pth.exists():
             regularizer.load_state_dict(torch.load(regularizer_pth.absolute().as_posix(), map_location=map_location))
         else:
-            print(f"Warning: requested to load regularizer state, but no saved regularizer state exists in {save_dir}.")
+            print(f"警告：请求加载正则化器状态，但在 {save_dir} 中不存在已保存的正则化器状态。")
     
     return model, optimizer, scheduler, regularizer, epoch
 
@@ -111,43 +113,52 @@ def save_training_state(
     regularizer: nn.Module = None,
     epoch: int = None,
 ) -> None:
-    """save_training_state returns model and optional other training modules
-    saved from prior training for downstream use
+    """将模型、优化器、调度器和正则化器状态持久化到磁盘。
 
-    Parameters
+    这镜像了 `load_training_state` 期望的格式，写入一个
+    清单映射，该映射捕获了哪些组件可用于恢复
+    工作流。
+
+    参数
     ----------
     save_dir : Union[str, Path]
-        directory from which to load training state (model, optional optimizer, scheduler, regularizer)
+        从中加载训练状态（模型、可选的优化器、调度器、正则化器）的目录
     save_name : str
-        name of model to load
+        要加载的模型的名称
     """
     if isinstance(save_dir, str):
         save_dir = Path(save_dir)
 
     manifest = {}
 
-    # Just save the model.module if model is in DDP mode
+    # 如果模型处于 DDP 模式，则只保存 model.module
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         save_dir.mkdir(exist_ok=True, parents=True)
         model_pth = save_dir / f"{save_name}_state_dict.pt"
         torch.save(model.module.state_dict(), model_pth.as_posix())
     else:
-        # otherwise save the model checkpoint
+        # 否则保存模型检查点
         model.save_checkpoint(save_dir, save_name)
+    # 记录哪些文件存在，以便加载器知道要期望什么
     manifest["model"] = f"{save_name}_state_dict.pt"
 
-    # save optimizer if state exists
+    # 跟踪哪些辅助状态存在，以便加载器可以优雅地跳过丢失的文件
+
+    # 如果状态存在，则保存优化器
     if optimizer is not None:
+        # 保存优化器状态，以便训练步骤可以继续保持动量/历史记录
         optimizer_pth = save_dir / "optimizer.pt"
         torch.save(optimizer.state_dict(), optimizer_pth)
         manifest["optimizer"] = "optimizer.pt"
 
     if scheduler is not None:
+        # 持久化调度器状态以保持学习率调度连续性
         scheduler_pth = save_dir / "scheduler.pt"
         torch.save(scheduler.state_dict(), scheduler_pth)
         manifest["scheduler"] = "scheduler.pt"
 
     if regularizer is not None:
+        # 记录任何正则化器状态，以便集成或稀疏性惩罚可以恢复
         regularizer_pth = save_dir / "regularizer.pt"
         torch.save(regularizer.state_dict(), regularizer_pth)
         manifest["regularizer"] = "regularizer.pt"

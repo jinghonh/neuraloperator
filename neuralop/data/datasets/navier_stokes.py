@@ -153,6 +153,10 @@ def load_navier_stokes_pt(
     channel_dim=1,
     subsampling_rate=None,
     num_workers=1,
+    download=True,
+    pin_memory=True,
+    persistent_workers=None,
+    prefetch_factor=None,
 ):
     dataset = NavierStokesDataset(
         root_dir=data_root,
@@ -167,15 +171,27 @@ def load_navier_stokes_pt(
         encoding=encoding,
         channel_dim=channel_dim,
         subsampling_rate=subsampling_rate,
+        download=download,
     )
 
     # return dataloaders for backwards compat
+    if persistent_workers is None:
+        persistent_workers = num_workers > 0
+    if persistent_workers and num_workers == 0:
+        raise ValueError("persistent_workers=True requires num_workers > 0")
+
+    dataloader_kwargs = dict(
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
+    if num_workers > 0 and prefetch_factor is not None:
+        dataloader_kwargs["prefetch_factor"] = prefetch_factor
+
     train_loader = DataLoader(
         dataset.train_db,
         batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=False,
+        **dataloader_kwargs,
     )
 
     test_loaders = {}
@@ -184,9 +200,7 @@ def load_navier_stokes_pt(
             dataset.test_dbs[res],
             batch_size=test_bsize,
             shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True,
-            persistent_workers=False,
+            **dataloader_kwargs,
         )
 
     return train_loader, test_loaders, dataset.data_processor
