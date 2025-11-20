@@ -22,7 +22,8 @@ config_name = "default"
 from zencfg import make_config_from_cli
 import sys
 
-sys.path.insert(0, "../")
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.burgers_pino_config import Default
 
 config = make_config_from_cli(Default)
