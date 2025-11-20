@@ -50,7 +50,7 @@ print(f"使用设备: {device}")
 # Navier-Stokes 数据集包含初始速度场和后续时间步的速度场
 # 注意：数据集较大，如果本地没有数据，需要先下载
 
-data_root = Path("~/data/navier_stokes/").expanduser()
+data_root = Path("./data/navier_stokes/").expanduser()
 print(f"\n数据目录: {data_root}")
 
 # 如果数据目录不存在，提示用户

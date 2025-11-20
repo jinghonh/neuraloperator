@@ -123,3 +123,4 @@ def update(frame):
 
 
 ani = animation.FuncAnimation(fig, update, frames=len(u_frames), interval=50, blit=False)
+ani.save('diffusion_advection_solver.gif')
