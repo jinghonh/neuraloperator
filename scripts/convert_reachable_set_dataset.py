@@ -33,8 +33,8 @@ def _default_grid(spatial_shape: Sequence[int]) -> Tuple[np.ndarray, np.ndarray]
         分别表示 x 和 y 坐标的二维阵列。
     """
     height, width = spatial_shape
-    x_line = np.linspace(-1.0, 1.0, width, dtype=np.float32)
-    y_line = np.linspace(-1.0, 1.0, height, dtype=np.float32)
+    x_line = np.linspace(-2.0, 2.0, width, dtype=np.float32)
+    y_line = np.linspace(-2.0, 2.0, height, dtype=np.float32)
     grid_x = np.broadcast_to(x_line, (height, width))
     grid_y = np.broadcast_to(y_line[:, None], (height, width))
     return grid_x, grid_y
@@ -345,10 +345,10 @@ def convert_dataset(args: argparse.Namespace) -> None:
     if train_count == 0 or train_count == total_pairs:
         raise ValueError("train_fraction resulted in empty split. Adjust the value.")
 
-    train_x = x_tensor[:train_count]
-    train_y = y_tensor[:train_count]
-    test_x = x_tensor[train_count:]
-    test_y = y_tensor[train_count:]
+    train_x = x_tensor[:train_count].clone()
+    train_y = y_tensor[:train_count].clone()
+    test_x = x_tensor[train_count:].clone()
+    test_y = y_tensor[train_count:].clone()
 
     metadata.update(
         {

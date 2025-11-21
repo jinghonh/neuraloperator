@@ -58,6 +58,9 @@ class PTDataset:
         If not, we need to unsqueeze it to explicitly have a channel dim.
         Only applies when there is only one data channel, as in our example problems
         Defaults to True
+    mmap_files : bool, optional
+        If True, use torch.load(..., mmap=True) to avoid materializing the entire PT archive
+        in memory. Falls back to the standard load path when unsupported. Defaults to True.
 
     All datasets are required to expose the following attributes after init:
 
@@ -84,79 +87,50 @@ class PTDataset:
         output_subsampling_rate=None,
         channel_dim=1,
         channels_squeezed=True,
+        mmap_files: bool = True,
     ):
         """Initialize the PTDataset.
 
         See class docstring for detailed parameter descriptions.
         """
-
         if isinstance(root_dir, str):
             root_dir = Path(root_dir)
 
         self.root_dir = root_dir
+        self.mmap_files = mmap_files
 
         # save dataloader properties for later
         self.batch_size = batch_size
         self.test_resolutions = test_resolutions
         self.test_batch_sizes = test_batch_sizes
 
-        # Load train data
+        train_path = Path(root_dir).joinpath(f"{dataset_name}_train_{train_resolution}.pt")
+        train_data = self._load_pt_archive(train_path)
 
-        data = torch.load(
-        Path(root_dir).joinpath(f"{dataset_name}_train_{train_resolution}.pt").as_posix()
+        x_train_raw = train_data["x"]
+        y_train_raw = train_data["y"]
+        n_train = min(n_train, x_train_raw.shape[0])
+        if n_train == 0:
+            raise ValueError("Training archive does not contain any samples.")
+
+        x_train = self._prepare_split(
+            tensor=x_train_raw,
+            n_examples=n_train,
+            channel_dim=channel_dim,
+            channels_squeezed=channels_squeezed,
+            subsampling_rate=input_subsampling_rate,
+            dtype=torch.float32,
         )
 
-        x_train = data["x"].type(torch.float32).clone()
-        if channels_squeezed:
-            x_train = x_train.unsqueeze(channel_dim)
+        y_train = self._prepare_split(
+            tensor=y_train_raw,
+            n_examples=n_train,
+            channel_dim=channel_dim,
+            channels_squeezed=channels_squeezed,
+            subsampling_rate=output_subsampling_rate,
+        )
 
-        # optionally subsample along data indices
-        ## Input subsampling
-        input_data_dims = data["x"].ndim - 2  # batch and channels
-        # convert None and 0 to 1
-        if not input_subsampling_rate:
-            input_subsampling_rate = 1
-        if not isinstance(input_subsampling_rate, list):
-            # expand subsampling rate along dims if one per dim is not provided
-            input_subsampling_rate = [input_subsampling_rate] * input_data_dims
-        # make sure there is one subsampling rate per data dim
-        assert (
-            len(input_subsampling_rate) == input_data_dims
-        ), f"Error: length mismatch between input_subsampling_rate and dimensions of data.\
-                input_subsampling_rate must be one int shared across all dims, or an iterable of\
-                    length {len(input_data_dims)}, got {input_subsampling_rate}"
-        # Construct full indices along which to grab X
-        train_input_indices = [slice(0, n_train, None)] + [slice(None, None, rate) for rate in input_subsampling_rate]
-        train_input_indices.insert(channel_dim, slice(None))
-        train_input_indices = tuple(train_input_indices)
-        x_train = x_train[train_input_indices]
-
-        y_train = data["y"].clone()
-        if channels_squeezed:
-            y_train = y_train.unsqueeze(channel_dim)
-
-        ## Output subsampling
-        output_data_dims = data["y"].ndim - 2
-        # convert None and 0 to 1
-        if not input_subsampling_rate:
-            output_subsampling_rate = 1
-        if not isinstance(output_subsampling_rate, list):
-            # expand subsampling rate along dims if one per dim is not provided
-            output_subsampling_rate = [output_subsampling_rate] * output_data_dims
-        # make sure there is one subsampling rate per data dim
-        assert (
-            len(output_subsampling_rate) == output_data_dims
-        ), f"Error: length mismatch between output_subsampling_rate and dimensions of data.\
-                input_subsampling_rate must be one int shared across all dims, or an iterable of\
-                    length {len(output_data_dims)}, got {output_subsampling_rate}"
-
-        # Construct full indices along which to grab Y
-        train_output_indices = [slice(0, n_train, None)] + [slice(None, None, rate) for rate in output_subsampling_rate]
-        train_output_indices.insert(channel_dim, slice(None))
-        train_output_indices = tuple(train_output_indices)
-        y_train = y_train[train_output_indices]
-
-        del data
+        del train_data
 
         # Fit optional encoders to train data
         # Actual encoding happens within DataProcessor
@@ -201,26 +175,30 @@ class PTDataset:
         self._test_dbs = {}
         for res, n_test in zip(test_resolutions, n_tests):
             print(f"Loading test db for resolution {res} with {n_test} samples ")
-            data = torch.load(Path(root_dir).joinpath(f"{dataset_name}_test_{res}.pt").as_posix())
+            test_path = Path(root_dir).joinpath(f"{dataset_name}_test_{res}.pt")
+            test_data = self._load_pt_archive(test_path)
 
-            x_test = data["x"].type(torch.float32).clone()
-            if channels_squeezed:
-                x_test = x_test.unsqueeze(channel_dim)
-            # optionally subsample along data indices
-            test_input_indices = [slice(0, n_test, None)] + [slice(None, None, rate) for rate in input_subsampling_rate]
-            test_input_indices.insert(channel_dim, slice(None))
-            test_input_indices = tuple(test_input_indices)
-            x_test = x_test[test_input_indices]
+            n_test = min(n_test, test_data["x"].shape[0])
+            if n_test == 0:
+                raise ValueError(f"Test archive for resolution {res} does not contain any samples.")
 
-            y_test = data["y"].clone()
-            if channels_squeezed:
-                y_test = y_test.unsqueeze(channel_dim)
-            test_output_indices = [slice(0, n_test, None)] + [slice(None, None, rate) for rate in output_subsampling_rate] 
-            test_output_indices.insert(channel_dim, slice(None))
-            test_output_indices = tuple(test_output_indices)
-            y_test = y_test[test_output_indices]
+            x_test = self._prepare_split(
+                tensor=test_data["x"],
+                n_examples=n_test,
+                channel_dim=channel_dim,
+                channels_squeezed=channels_squeezed,
+                subsampling_rate=input_subsampling_rate,
+                dtype=torch.float32,
+            )
+            y_test = self._prepare_split(
+                tensor=test_data["y"],
+                n_examples=n_test,
+                channel_dim=channel_dim,
+                channels_squeezed=channels_squeezed,
+                subsampling_rate=output_subsampling_rate,
+            )
 
-            del data
+            del test_data
 
             test_db = TensorDataset(
                 x_test,
@@ -239,3 +217,56 @@ class PTDataset:
     @property
     def test_dbs(self):
         return self._test_dbs
+
+    def _load_pt_archive(self, path: Path):
+        """Load a PT archive, enabling mmap when available to avoid full reads."""
+        load_kwargs = {"map_location": "cpu"}
+        if self.mmap_files:
+            load_kwargs["mmap"] = True
+        try:
+            return torch.load(path.as_posix(), **load_kwargs)
+        except TypeError:
+            # Older PyTorch builds might not support mmap. Retry without it.
+            load_kwargs.pop("mmap", None)
+            return torch.load(path.as_posix(), **load_kwargs)
+
+    @staticmethod
+    def _normalize_subsampling_rate(rate, n_dims: int, rate_name: str):
+        """Convert subsampling specs to a per-dimension list."""
+        if not rate:
+            rate = 1
+        if isinstance(rate, int):
+            rates = [rate] * n_dims
+        else:
+            rates = list(rate)
+        if len(rates) != n_dims:
+            raise ValueError(
+                f"length mismatch between {rate_name} and tensor dimensions: "
+                f"expected {n_dims} entries, got {rates}"
+            )
+        rates = [1 if r in (None, 0) else r for r in rates]
+        return rates
+
+    def _prepare_split(
+        self,
+        tensor: torch.Tensor,
+        *,
+        n_examples: int,
+        channel_dim: int,
+        channels_squeezed: bool,
+        subsampling_rate,
+        dtype: torch.dtype | None = None,
+    ) -> torch.Tensor:
+        """Apply dtype normalization, optional unsqueeze, and subsampling."""
+        if dtype is not None and tensor.dtype != dtype:
+            tensor = tensor.to(dtype)
+        if channels_squeezed:
+            tensor = tensor.unsqueeze(channel_dim)
+        data_dims = tensor.ndim - 2  # remove batch + channel dims
+        rates = self._normalize_subsampling_rate(subsampling_rate, data_dims, "subsampling_rate")
+
+        data_slices = [slice(None, None, rate) for rate in rates]
+        indices = [slice(0, n_examples, None)] + data_slices
+        indices.insert(channel_dim, slice(None))
+        tensor = tensor[tuple(indices)]
+        return tensor

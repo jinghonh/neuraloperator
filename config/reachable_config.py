@@ -22,8 +22,8 @@ class ReachableSetDatasetConfig(ConfigBase):
     dataset_name: str = "linear_value_function"
     train_resolution: str = "default"
     batch_size: int = 4
-    n_train: int = 100
-    n_tests: List[int] = [20]
+    n_train: int = 9000
+    n_tests: List[int] = [1000]
     test_resolutions: List[str] = ["default"]
     test_batch_sizes: List[int] = [4]
     encode_input: bool = True
