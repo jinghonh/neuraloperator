@@ -3,120 +3,92 @@
    :alt: PyPI
 
 .. image:: https://github.com/NeuralOperator/neuraloperator/actions/workflows/test.yml/badge.svg
-   :target: https://github.com/NeuralOperator/neuraloperator/actions/workflows/test.yml
+   :target: https://github.com/neuraloperator/neuraloperator/actions/workflows/test.yml
 
 
-#######################################################################
-NeuralOperator: Learning in Infinite Dimensions
-#######################################################################
+NeuralOperator 是一个基于 PyTorch 的神经算子学习库，涵盖 Fourier Neural Operator、Tensorized Neural Operator 等能力。此 README 的重点在于说明如何使用 `uv` 管理环境，并描述与 Reachable Set 数据集相关的脚本。
 
-``neuraloperator`` is a comprehensive library for 
-learning neural operators in PyTorch.
-It is the official implementation for Fourier Neural Operators 
-and Tensorized Neural Operators.
+========================
+环境管理（使用 uv）
+========================
 
-Unlike regular neural networks, neural operators
-enable learning mapping between function spaces, and this library
-provides all of the tools to do so on your own data.
+本项目推荐使用 [`uv`](https://uv.run) 作为 Python 环境管理工具，它会解析项目根目录下的 `constraints.txt`（即 `@constraints.txt` 文件）并创建可复现的环境。
 
-Neural operators are also resolution invariant, 
-so your trained operator can be applied on data of any resolution.
+1. 安装 `uv`：
 
-Checkout the `documentation <https://neuraloperator.github.io/dev/index.html>`_ for more!
+.. code-block:: shell
 
-============
-Installation
-============
+   python -m pip install --upgrade pip
+   python -m pip install uv
 
-Just clone the repository and install locally (in editable mode so changes in the code are 
-immediately reflected without having to reinstall):
+2. 进入仓库并安装依赖（默认读取 `constraints.txt`）：
 
-.. code::
+.. code-block:: shell
 
-  git clone https://github.com/NeuralOperator/neuraloperator
-  cd neuraloperator
-  pip install -e .
-  pip install -r requirements.txt
+   cd neuraloperator
+   uv install --constraints constraints.txt
 
-You can also just pip install the most recent stable release of the library 
-on `PyPI <https://pypi.org/project/neuraloperator/>`_:
+3. 运行脚本或测试时通过 `uv run` 前缀激活隔离环境，例如：
 
+.. code-block:: shell
 
-.. code::
+   uv run python scripts/train_reachable_set.py --help
 
-  pip install neuraloperator
+4. 若需直接进入 shell，可执行 `uv shell`，命令会自动活跃该虚拟环境。
 
+====================
+依赖与约束说明
+====================
 
-==========
-Quickstart
-==========
+- `@constraints.txt` 指定了基础依赖的版本（目前包含 `numpy>=1.26.4` 与 `torch_harmonics>=0.7`）。
+- `uv install --constraints constraints.txt` 会读取该文件并锁定相关版本，避免不同机器之间产生漂移。
+- 若新增依赖，请在 `constraints.txt` 中追加后重新执行该命令以刷新环境。
 
-After you've installed the library, you can start training operators seamlessly:
+========================
+数据转换脚本
+========================
 
+- `@scripts/convert_reachable_set_dataset.py`：将 `data/ReachableSetDataset/linearSystemValueFunctionData.mat` 转换成 NeuralOperator 可训练的 `.pt` 文件，并同时生成 metadata（包括网格形状、参数数量等）。推荐通过 `--dataset-name`、`--resolution-tag`、`--max-pairs` 等参数控制输出。
 
-.. code-block:: python
+  .. code-block:: shell
 
-   from neuralop.models import FNO
+     uv run python scripts/convert_reachable_set_dataset.py \
+       --dataset-name linear_value_function \
+       --resolution-tag default
 
-   operator = FNO(n_modes=(32, 32), 
-                  hidden_channels=64,
-                  in_channels=2, 
-                  out_channels=1)
+- `@scripts/convert_reachable_set_value_pairs.py`：针对 value-to-value 的任务（V_t -> V_{t'}），在 MAT 文件中根据时间戳选取输入与目标对，支持 `--source-time`、`--target-time`、`--train-fraction` 等参数，并会输出 train/test `.pt` 文件与 metadata。
 
-Tensorization is also provided out of the box: you can improve the previous models
-by simply using a Tucker Tensorized FNO with just a few parameters:
+  .. code-block:: shell
 
-.. code-block:: python
+     uv run python scripts/convert_reachable_set_value_pairs.py \
+       --dataset-name linear_value_t1_t2 \
+       --resolution-tag default \
+       --source-time 1.0 \
+       --target-time 2.0
 
-   from neuralop.models import TFNO
+========================
+训练脚本（Reachable Set）
+========================
 
-   operator = TFNO(n_modes=(32, 32), 
-                   hidden_channels=64,
-                   in_channels=2, 
-                   out_channels=1,
-                   factorization='tucker',
-                   implementation='factorized',
-                   rank=0.05)
+- `@scripts/train_reachable_set.py`：使用包含坐标、时间以及系统参数等完整信息的样本训练线性值函数。默认配置来源于 `config/reachable_config.py`，可通过 CLI 或 YAML 覆盖模型结构、patching、调度器等参数。
 
-This will use a Tucker factorization of the weights. The forward pass
-will be efficient by contracting directly the inputs with the factors
-of the decomposition. The Fourier layers will have 5% of the parameters
-of an equivalent, dense Fourier Neural Operator!
+  .. code-block:: shell
 
-Checkout the `documentation <https://neuraloperator.github.io/dev/index.html>`_ for more!
+     uv run python scripts/train_reachable_set.py --config config/reachable_config.py
 
+- `@scripts/train_reachable_set_value_pairs.py`：使用 value-to-value 对训练，适用于 `linear_value_t1_t2` 类数据，流程与常规训练脚本一致但专注于时间差异的映射建模。
 
-Using with Weights and Biases
------------------------------
+  .. code-block:: shell
 
-Our ``Trainer`` natively supports logging to W&B. To use these features, create a file in
-``neuraloperator/config`` called ``wandb_api_key.txt`` and paste your W&B API key there.
-You can configure the project you want to use and your username in the main yaml configuration files.
+     uv run python scripts/train_reachable_set_value_pairs.py --config config/reachable_config.py
 
+====================
+后续建议
+====================
 
-============
-Contributing
-============
-
-NeuralOperator is 100% open-source, and we welcome contributions from the community! 
-
-Our mission for NeuralOperator is to provide access to well-documented, robust implementations of 
-neural operator methods from foundations to the cutting edge. The library is primarily intended for 
-methods that directly relate to operator learning: new architectures, meta-algorithms, training methods 
-and benchmark datasets. We are also interested in integrating interactive examples that showcase operator 
-learning in action on small sample problems.
-
-If your work provides one of the above, we would be thrilled to integrate it into the library. 
-Otherwise, if your work simply relies on a version of the NeuralOperator codebase, we recommend 
-publishing your code separately using a procedure outlined in our
-`developer's guide <https://neuraloperator.github.io/dev/dev_guide/index.html>`_, under the section 
-"Publishing code built on the library". 
-
-If you spot a bug or a typo in the documentation, or have an idea for a feature you'd like to see,
-please report it on our `issue tracker <https://github.com/neuraloperator/neuraloperator/issues>`_, 
-or even better, open a `Pull Request <https://github.com/neuraloperator/neuraloperator/pulls>`_. 
-
-For detailed development setup, testing, and contribution guidelines, please refer to our `Contributing Guide <CONTRIBUTING.md>`_.
+- 在训练前先运行对应的转换脚本生成 `.pt` 文件，metadata 会被用来自动调整 `data_channels`、`grid_shape` 等配置项。
+- 每次更新依赖后请重新执行 `uv install --constraints constraints.txt` 以保持虚拟环境一致。
+- 在 `uv` 环境下运行测试：`uv run pytest neuralop -v`。
 
 
 ===============
