@@ -1,0 +1,9 @@
+uv run python ./scripts/convert_reachable_set_value_pairs.py --mat-path data/ReachableSetDataset/linearSystemValueFunctionData.mat --output-dir data/ReachableSetDataset/processed --source-time 1.5 --target-time 2.0 --time-tolerance 0.05 
+
+uv run python scripts/train_reachable_set_value_pairs.py --data.folder data/ReachableSetDataset/processed --data.dataset_name linear_value_t1_t2 --data.train_resolution default --data.test_resolutions default --data.n_train 900 --data.n_tests 100 --data.batch_size 128
+
+uv run python scripts/train_reachable_set_value_pairs.py --data.folder data/ReachableSetDataset/processed --data.dataset_name linear_value_t1_t2 --data.train_resolution default --data.test_resolutions default --data.n_train 900 --data.n_tests 100 --data.batch_size 128 --wandb.log True --wandb.project reachable_set_value_pairs --wandb.group baseline_run
+
+uv run python scripts/visualize_linear_value_pairs.py --dataset-path data/ReachableSetDataset/processed/linear_value_t1_t2_train_default.pt --sample-indices 0 1 2 3 4 5 6 7 8 9 10 --save-dir outputs/viz
+
+uv run python scripts/analyze_linear_value_pairs.py --dataset-path data/ReachableSetDataset/processed/linear_value_t1_t2_train_default.pt --channels 0 1 --samples 0 10 20

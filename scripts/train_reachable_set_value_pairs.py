@@ -1,12 +1,12 @@
-"""Training loop for the Reachable Set linear value function dataset."""
+"""Training loop for Reachable Set value-to-value pairs (V_t -> V_{t'})."""
 
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
-
 import os
+
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.distributed as dist
@@ -19,12 +19,58 @@ from neuralop.utils import get_wandb_api_key, count_model_params
 from neuralop.mpu.comm import get_local_rank
 from neuralop.training import setup, AdamW
 
-config_name = "reachable"
 from zencfg import make_config_from_cli
-
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config.reachable_config import Default
+
+
+DEFAULT_DATASET_NAME = "linear_value_t1_t2"
+DEFAULT_RESOLUTION = "default"
+config_name = "reachable_value_pairs"
+
+
+# Pre-process CLI args so list-typed fields can be provided as simple scalars
+# by users (e.g. `--data.test_resolutions default` or `--data.n_tests 100`).
+# This converts those scalar tokens into JSON array literals (e.g. '["default"]')
+# so zencfg/pydantic can parse them as lists instead of raising validation errors.
+def _preprocess_cli_list_flags():
+    flags = [
+        "--data.test_resolutions",
+        "--data.n_tests",
+        "--data.test_batch_sizes",
+    ]
+    argv = sys.argv
+    # operate in-place on argv list
+    for idx, token in enumerate(list(argv)):
+        for flag in flags:
+            # space-separated form: --flag value
+            if token == flag:
+                if idx + 1 < len(argv):
+                    val = argv[idx + 1]
+                    # if it's already a JSON array or quoted, leave it
+                    if not (val.startswith("[") or val.startswith('"') or val.startswith("'")):
+                        try:
+                            parsed = json.loads(val)
+                        except Exception:
+                            parsed = val
+                        new_val = json.dumps(parsed if isinstance(parsed, list) else [parsed])
+                        argv[idx + 1] = new_val
+            # equals form: --flag=value
+            elif token.startswith(flag + "="):
+                _, eqval = token.split("=", 1)
+                if not (eqval.startswith("[") or eqval.startswith('"') or eqval.startswith("'")):
+                    try:
+                        parsed = json.loads(eqval)
+                    except Exception:
+                        parsed = eqval
+                    new_eq = json.dumps(parsed if isinstance(parsed, list) else [parsed])
+                    argv[idx] = f"{flag}={new_eq}"
+    sys.argv = argv
+
+
+# run preprocessing before zencfg parses CLI args
+_preprocess_cli_list_flags()
 
 
 def _load_dataset_metadata(data_dir: Path, dataset_name: str) -> dict | None:
@@ -35,23 +81,61 @@ def _load_dataset_metadata(data_dir: Path, dataset_name: str) -> dict | None:
     return None
 
 
-config = make_config_from_cli(Default)
-metadata = _load_dataset_metadata(Path(config.data.folder).expanduser(), config.data.dataset_name)
-if metadata is not None:
+def _apply_metadata_overrides(config, metadata: dict | None):
+    if metadata is None:
+        return
     if hasattr(config.model, "data_channels"):
         config.model.data_channels = metadata.get("input_channels", config.model.data_channels)
     if hasattr(config.model, "out_channels"):
         config.model.out_channels = metadata.get("output_channels", config.model.out_channels)
 
-# Inputs already contain coordinate channels, so disable extra positional embeddings
-config.model.positional_embedding = None
+    if "grid_shape" in metadata:
+        config.data.grid_shape = metadata["grid_shape"]
+    if "train_samples" in metadata:
+        config.data.n_train = min(config.data.n_train, metadata["train_samples"])
+    if "test_samples" in metadata and config.data.n_tests:
+        # assume single test split mirrors metadata count when present
+        config.data.n_tests[0] = min(config.data.n_tests[0], metadata["test_samples"])
+
+
+config = make_config_from_cli(Default)
+if not getattr(config.data, "dataset_name", None) or config.data.dataset_name == Default().data.dataset_name:
+    config.data.dataset_name = DEFAULT_DATASET_NAME
+if not getattr(config.data, "train_resolution", None):
+    config.data.train_resolution = DEFAULT_RESOLUTION
+if not getattr(config.data, "test_resolutions", None):
+    config.data.test_resolutions = [DEFAULT_RESOLUTION]
+
+metadata = _load_dataset_metadata(Path(config.data.folder).expanduser(), config.data.dataset_name)
+_apply_metadata_overrides(config, metadata)
+
+# Coerce some CLI-provided scalar values into lists so downstream
+# code (which expects List[...] types) works when the user passes
+# a single value like `--data.n_tests 100` or `--data.test_resolutions default`.
+def _ensure_list_and_cast(obj, attr_name, cast_type=str):
+    val = getattr(obj, attr_name, None)
+    if val is None:
+        return
+    # If zencfg left the value as a string for a scalar, cast it
+    if not isinstance(val, list):
+        val = [val]
+    # Cast individual entries to requested type when possible
+    casted = []
+    for entry in val:
+        try:
+            casted.append(cast_type(entry))
+        except Exception:
+            # fallback: keep original entry
+            casted.append(entry)
+    setattr(obj, attr_name, casted)
+
+_ensure_list_and_cast(config.data, "n_tests", int)
+_ensure_list_and_cast(config.data, "test_resolutions", str)
+_ensure_list_and_cast(config.data, "test_batch_sizes", int)
 
 config = config.to_dict()
 
-# Limit CPU thread usage for BLAS/OpenMP-related libraries to avoid
-# saturating all CPU cores (helps when many DataLoader workers or
-# MKL/OpenMP spawn many threads). These default values can be
-# overridden by environment variables before launching the script.
+# Limit CPU thread usage for BLAS/OpenMP-related libraries
 os.environ.setdefault("OMP_NUM_THREADS", os.environ.get("OMP_NUM_THREADS", "1"))
 os.environ.setdefault("MKL_NUM_THREADS", os.environ.get("MKL_NUM_THREADS", "1"))
 os.environ.setdefault("OPENBLAS_NUM_THREADS", os.environ.get("OPENBLAS_NUM_THREADS", "1"))
@@ -140,7 +224,6 @@ data_processor = data_processor.to(device)
 try:
     data_processor.set_non_blocking(True)
 except Exception:
-    # not all data processors implement this, silently continue
     pass
 
 if config.distributed.use_distributed:

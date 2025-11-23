@@ -460,12 +460,15 @@ class Trainer:
                     )
 
         self.n_samples = 0
+        last_sample = None
+        last_outs = None
         with torch.no_grad():
             # 在评估期间将梯度钳制为零以节省内存
             for idx, sample in enumerate(data_loader):
                 return_output = False
                 if idx == len(data_loader) - 1:
                     return_output = True
+                last_sample = sample
                 if mode == "single_step":
                     eval_step_losses, outs = self.eval_one_batch(
                         sample, loss_dict, return_output=return_output
@@ -477,6 +480,7 @@ class Trainer:
                         return_output=return_output,
                         max_steps=max_steps,
                     )
+                last_outs = outs
 
                 for loss_name, val_loss in eval_step_losses.items():
                     errors[f"{log_prefix}_{loss_name}"] += val_loss
@@ -485,11 +489,47 @@ class Trainer:
             errors[key] /= self.n_samples
 
         # 在最后一个批次上，记录模型输出
-        if self.log_output and self.wandb_log:
-            errors[f"{log_prefix}_outputs"] = wandb.Image(outs)
+        if self.log_output and self.wandb_log and last_outs is not None:
+            image_dict = self._build_wandb_images(last_outs, last_sample)
+            for name, img in image_dict.items():
+                if img is not None:
+                    errors[f"{log_prefix}_{name}"] = wandb.Image(img)
 
         return errors
 
+    def _prepare_wandb_image(self, outputs):
+        if not torch.is_tensor(outputs):
+            return outputs
+        tensor = outputs.detach().cpu()
+        if tensor.dim() == 4:
+            tensor = tensor[0]
+        if tensor.dim() == 3 and tensor.shape[0] in (1, 3):
+            tensor = tensor.permute(1, 2, 0)
+        if tensor.dim() == 2:
+            tensor = tensor.unsqueeze(-1)
+        if tensor.dim() == 3 and tensor.shape[2] == 1:
+            tensor = tensor.squeeze(2)
+            tensor = tensor.unsqueeze(-1)
+
+        img = tensor.numpy().astype(float)
+        minv, maxv = img.min(), img.max()
+        if maxv > minv:
+            img = (img - minv) / (maxv - minv)
+        return img
+
+    def _build_wandb_images(self, outputs, sample):
+        images = {"outputs": self._prepare_wandb_image(outputs)}
+        if sample is None:
+            return images
+
+        y_tensor = sample.get("y")
+        if torch.is_tensor(y_tensor):
+            images["targets"] = self._prepare_wandb_image(y_tensor)
+            if torch.is_tensor(outputs):
+                diff = outputs.detach().cpu() - y_tensor.detach().cpu()
+                images["diff"] = self._prepare_wandb_image(diff)
+
+        return images
     def on_epoch_start(self, epoch):
         """on_epoch_start 在每个训练轮次开始时运行。
         此方法是一个存根，可以在更复杂的情况下被覆盖。

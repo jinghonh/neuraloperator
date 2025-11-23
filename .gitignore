@@ -84,3 +84,4 @@ target/
 *.json
 *.tgz
 data/*
+wandb/*

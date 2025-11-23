@@ -9,9 +9,9 @@ from .wandb import WandbConfig
 
 
 class ReachableSetOptConfig(OptimizationConfig):
-    n_epochs: int = 400
-    learning_rate: float = 5e-4
-    training_loss: str = "h1"
+    n_epochs: int = 1000
+    learning_rate: float = 5e-3
+    training_loss: str = "l2"
     weight_decay: float = 1e-4
     scheduler: str = "CosineAnnealingLR"
     scheduler_T_max: int = 200
@@ -21,9 +21,9 @@ class ReachableSetDatasetConfig(ConfigBase):
     folder: str = "./data/ReachableSetDataset/processed"
     dataset_name: str = "linear_value_function"
     train_resolution: str = "default"
-    batch_size: int = 4
-    n_train: int = 9000
-    n_tests: List[int] = [1000]
+    batch_size: int = 128
+    n_train: int = 900
+    n_tests: List[int] = [100]
     test_resolutions: List[str] = ["default"]
     test_batch_sizes: List[int] = [4]
     encode_input: bool = True
